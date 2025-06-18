@@ -14,12 +14,6 @@ typedef struct Pilha
     struct Pilha *anterior;
 } Pilha;
 
-typedef struct PilhaStr
-{
-    char str[512];
-    struct PilhaStr *anterior;
-} PilhaStr;
-
 Pilha *push(Pilha **pilha, float valor)
 {
     Pilha *P = malloc(sizeof(Pilha));
@@ -44,29 +38,6 @@ Pilha *pop(Pilha **pilha)
     else
         printf("Pilha vazia.\n");
     return P;
-}
-
-PilhaStr *pushStr(PilhaStr *pilha, const char *str)
-{
-    PilhaStr *P = malloc(sizeof(PilhaStr));
-    if (!P)
-    {
-        printf("Erro de alocação de memória.\n");
-        return pilha;
-    }
-    strcpy(P->str, str);
-    P->anterior = pilha;
-    return P;
-}
-
-PilhaStr *popStr(PilhaStr *pilha)
-{
-    if (pilha == NULL)
-    {
-        printf("Pilha vazia.\n");
-        return NULL;
-    }
-    return pilha->anterior;
 }
 
 int isOperator(char c)
@@ -126,8 +97,15 @@ char getMainOperator(const char *expr)
 
 char *getFormaInFixa(char *str)
 {
-    PilhaStr *P = NULL;
-    char token[512];
+    static char infixa[512];
+    typedef struct
+    {
+        char expr[256];
+    } Node;
+
+    Node stack[64];
+    int top = -1;
+    char token[64];
     int i = 0;
 
     while (str[i])
@@ -142,54 +120,45 @@ char *getFormaInFixa(char *str)
 
         if (isdigit(token[0]) || token[0] == '.')
         {
-            PilhaStr *n = malloc(sizeof(PilhaStr));
-            snprintf(n->str, sizeof(n->str), "%s", token);
-            n->anterior = P;
-            P = n;
+            snprintf(stack[++top].expr, sizeof(stack[0].expr), "%s", token);
         }
+
         else if (!strcmp(token, "sen") || !strcmp(token, "cos") || !strcmp(token, "tg") || !strcmp(token, "log") || !strcmp(token, "raiz"))
         {
-            PilhaStr *a = P;
-            P = P->anterior;
-            PilhaStr *n = malloc(sizeof(PilhaStr));
-            snprintf(n->str, sizeof(n->str), "%s(%s)", token, a->str);
-            n->anterior = P;
-            P = n;
-            free(a);
+            snprintf(stack[top].expr, sizeof(stack[0].expr), "%s(%s)", token, stack[top].expr);
         }
+
         else if (isOperator(token[0]) && strlen(token) == 1)
         {
-            char op = token[0], exprA[256], exprB[256], oa, ob;
-            PilhaStr *b = P;
-            P = P->anterior;
-            PilhaStr *a = P;
-            P = P->anterior;
-            int pa = precedence(oa = getMainOperator(a->str)), pb = precedence(ob = getMainOperator(b->str)), p = precedence(op);
-            snprintf(exprA, sizeof(exprA), (oa && pa < p) ? "(%s)" : "%s", a->str);
-            snprintf(exprB, sizeof(exprB), (ob && (pb < p || (pb == p && op != '^'))) ? "(%s)" : "%s", b->str);
-            PilhaStr *n = malloc(sizeof(PilhaStr));
-            snprintf(n->str, sizeof(n->str), "%s %c %s", exprA, op, exprB);
-            n->anterior = P;
-            P = n;
-            free(a);
-            free(b);
+            char op = token[0];
+            char *a = stack[top - 1].expr;
+            char *b = stack[top].expr;
+
+            char oa = getMainOperator(a), ob = getMainOperator(b);
+            int pa = precedence(oa), pb = precedence(ob), p = precedence(op);
+
+            char exprA[256], exprB[256];
+            snprintf(exprA, sizeof(exprA), (oa && pa < p) ? "(%s)" : "%s", a);
+            snprintf(exprB, sizeof(exprB), (ob && (pb < p || (pb == p && op != '^'))) ? "(%s)" : "%s", b);
+
+            snprintf(stack[top - 1].expr, sizeof(stack[0].expr), "%s %c %s", exprA, op, exprB);
+            top--;
         }
     }
 
-    static char final[512];
-    snprintf(final, sizeof(final), "%s", P ? P->str : "");
-    if (P)
-        free(P);
-    return final;
+    snprintf(infixa, sizeof(infixa), "%s", top >= 0 ? stack[top].expr : "");
+    return infixa;
 }
 
 char *getFormaPosFixa(char *str)
 {
     static char posfixa[512];
     posfixa[0] = '\0';
-    PilhaStr *P = NULL;
-    char token[512];
-    int i = 0, j = 0;
+
+    char stack[64][32];
+    int top = -1, j = 0;
+    char token[255];
+    int i = 0;
 
     while (str[i])
     {
@@ -205,40 +174,53 @@ char *getFormaPosFixa(char *str)
                 posfixa[j++] = (str[i] == ',') ? '.' : str[i++];
             posfixa[j++] = ' ';
         }
+
         else if (isalpha(str[i]))
         {
             int k = 0;
             while (isalpha(str[i]))
                 token[k++] = str[i++];
             token[k] = '\0';
-            P = pushStr(P, token);
+            strcpy(stack[++top], token);
         }
+
         else if (str[i] == '(')
-            P = pushStr(P, "("), i++;
-        else if (str[i] == ')')
         {
-            while (P && strcmp(P->str, "("))
-                j += sprintf(&posfixa[j], "%s ", P->str), P = popStr(P);
-            if (P)
-                P = popStr(P);
-            if (P && isalpha(P->str[0]))
-                j += sprintf(&posfixa[j], "%s ", P->str), P = popStr(P);
+            strcpy(stack[++top], "(");
             i++;
         }
+
+        else if (str[i] == ')')
+        {
+            while (top >= 0 && strcmp(stack[top], "(") != 0)
+                j += sprintf(&posfixa[j], "%s ", stack[top--]);
+            if (top >= 0 && strcmp(stack[top], "(") == 0)
+                top--;                              
+            if (top >= 0 && isalpha(stack[top][0]))
+                j += sprintf(&posfixa[j], "%s ", stack[top--]);
+            i++;
+        }
+
         else if (isOperator(str[i]))
         {
             char op[2] = {str[i], '\0'};
-            while (P && isOperator(P->str[0]) && precedence(P->str[0]) >= precedence(op[0]))
-                j += sprintf(&posfixa[j], "%s ", P->str), P = popStr(P);
-            P = pushStr(P, op);
+            while (top >= 0 && isOperator(stack[top][0]) &&
+                   precedence(stack[top][0]) >= precedence(op[0]))
+            {
+                j += sprintf(&posfixa[j], "%s ", stack[top--]);
+            }
+            strcpy(stack[++top], op);
             i++;
         }
+
         else
+        {
             i++;
+        }
     }
 
-    while (P)
-        j += sprintf(&posfixa[j], "%s ", P->str), P = popStr(P);
+    while (top >= 0)
+        j += sprintf(&posfixa[j], "%s ", stack[top--]);
 
     posfixa[j] = '\0';
     return posfixa;
@@ -247,7 +229,7 @@ char *getFormaPosFixa(char *str)
 float getValorPosFixa(char *StrPosFixa)
 {
     Pilha *stack = NULL;
-    char token[64];
+    char token[255];
     int i = 0;
 
     // DEBUG : printf("\n=== Início da avaliação pós-fixa ===\n");
@@ -261,7 +243,6 @@ float getValorPosFixa(char *StrPosFixa)
             continue;
         }
 
-        // Número
         if (isdigit(StrPosFixa[i]) || StrPosFixa[i] == '.' || StrPosFixa[i] == ',')
         {
             int k = 0;
@@ -272,7 +253,6 @@ float getValorPosFixa(char *StrPosFixa)
             // DEBUG : printf("[DEBUG] Empilhando número: %.2f\n", atof(token));
             stack = push(&stack, atof(token));
         }
-        // Função
         else if (isalpha(StrPosFixa[i]))
         {
             int k = 0;
@@ -310,7 +290,6 @@ float getValorPosFixa(char *StrPosFixa)
             // DEBUG : printf("[DEBUG] Aplicando função %s(%.2f) = %.2f\n", token, a, res);
             stack = push(&stack, res);
         }
-        // Operadores
         else if (isOperator(StrPosFixa[i]))
         {
             char op = StrPosFixa[i++];
